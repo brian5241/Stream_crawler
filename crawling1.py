@@ -4,6 +4,16 @@ import requests #인터넷 주소(url)에 html 파일을 요청
 from bs4 import BeautifulSoup # 그렇게 해서 얻어온 html파일을 예쁘게 '파싱' (필요정보추출)
 import pandas as pd
 import re #정규표현식(re), 문자열 정제
+from io import StringIO
+
+#buffer(임시 데이터) 상태인 df를 encode한 후
+#결과를 반환해주는 코드
+#지금은 내 컴퓨터(로컬)이지만, 배포 후 '클라우드'에 존재
+#클라우드에서 임시 파일인 buffer를 나의 컴퓨터로 다운로드 가능한 상태로 변경
+def download_to_csv(df):
+    buffer = StringIO()
+    df.to_csv(buffer, index  = False)
+    return buffer.getvalue().encode('utf-8-sig')
 
 #검색어, 제외할 검색어, 지역, 직무, 경력, 학력, 페이지 수
 #매개변수에 입력될 자료형 '미리 안내'
@@ -25,6 +35,7 @@ def crawling_saramin(search_text : str,
     rows = []
 
     #requests로 일단 '검색할 페이지'에 요청
+    #page -> 한 페이지 검색 결과
     url = 'https://www.saramin.co.kr/zf_user/search'
     headers = {
         "User-Agent": (
@@ -35,79 +46,88 @@ def crawling_saramin(search_text : str,
         "Accept-Language": "ko-KR,ko;q=0.9,en;q=0.8",
     }
 
-    #파라미터 정제 -> 여기서 파라미터는 '검색 조건'
-    #'키'는 웹사이트 지정한 '키'
-    parameters = {'searchword' : search_text,
-                  'except_read' : except_text,
-                  'comp_page' : max_pages}
-    #직무
-    if category :
-        parameters['cat_mcd'] = category
-    #위치
-    if region:
-        parameters['loc_mcd'] = region
-    #경력
-    if career:
-        parameters['career_cd'] = career
-    #학력
-    if education:
-        parameters['edu_cd'] = education
-    response = requests.get(url=url,
-                 headers = headers,
-                 params = parameters,#조건에 대한 정보
-                 timeout = 15) #html반환해줄때까지 대기시간
-    #크롤링 결과를 response로 받고
-    #response 안에 있는 text 파일을 'html.parser'로 파싱
-    #객체 soup를 생성
-    soup = BeautifulSoup(response.text, 'html.parser')
-
-    #내가 필요한 결과의 'id' 전달, 추출
-    #soup.select(구분자) : '구분자'를 보유한 모든 내용
-    #soup.select_one(구분자) : '구분자'를 보유한 내용 딱 하나
-    items = soup.select('div.item_recruit')
-    for item in items:
-        #직무정보(job_area), 회사정보(corp_area) 가져오기
-        job_area =item.select_one('div.area_job')
-        corp_area = item.select_one('div.area_corp')
-
-        #직무정보가 없다
-        if not job_area:
-            #한 칸의 정보가 없을 때에는 '이번에만 넘어가자'
-            continue
-        
-        #직무, 회사정보 get
-        job_title = job_area.select_one('.job_tit').get_text(strip = True)
-        condition_area = job_area.select_one('.job_condition')
-        spans = condition_area.select('span')
-        
-        location = spans[0].get_text(strip = True)
-        condition1 = spans[1].get_text(strip = True)
-
-        # condition2 = spans[-1].get_text(strip = True) : 
-        # 정규직 계약직 뽑아내는 코드 / -1은 마지막이란뜻
-        job_sector = item.select_one('div.job_sector')
-        condition2 = job_sector.get_text(strip = True)
+    #1페이지부터 ~max_pages+1까지 크롤링 할 수 잇게 반복문 적용
+    for page in range(1, max_pages+1):
 
 
-        #회사정보
-        cor_name = corp_area.select_one('strong').get_text(strip = True)
+        #파라미터 정제 -> 여기서 파라미터는 '검색 조건'
+        #'키'는 웹사이트 지정한 '키'
+        parameters = {'searchword' : search_text,
+                    'except_read' : except_text,
+                    'comp_page' : page}
+        #직무
+        if category :
+            parameters['cat_mcd'] = category
+        #위치
+        if region:
+            parameters['loc_mcd'] = region
+        #경력
+        if career:
+            parameters['career_cd'] = career
+        #학력
+        if education:
+            parameters['edu_cd'] = education
 
-        #링크
-        link = job_area.select_one('.job_tit').select_one('.data_layer[href]')
-        real_link = 'https://www.saramin.co.kr' + link.get('href')
+        try:
+            response = requests.get(url=url,
+                        headers = headers,
+                        params = parameters,#조건에 대한 정보
+                        timeout = 15) #html반환해줄때까지 대기시간
+            #크롤링 결과를 response로 받고
+            #response 안에 있는 text 파일을 'html.parser'로 파싱
+            #객체 soup를 생성
+            soup = BeautifulSoup(response.text, 'html.parser')
 
-        rows.append({
-            '이름' : job_title,
-            '위치' : location,
-            '조건1' : condition1,
-            '조건2' : condition2,
-            '회사이름' : cor_name,
-            '링크' : real_link
-        })
+            #내가 필요한 결과의 'id' 전달, 추출
+            #soup.select(구분자) : '구분자'를 보유한 모든 내용
+            #soup.select_one(구분자) : '구분자'를 보유한 내용 딱 하나
+            items = soup.select('div.item_recruit')
+            for item in items:
+                #직무정보(job_area), 회사정보(corp_area) 가져오기
+                job_area =item.select_one('div.area_job')
+                corp_area = item.select_one('div.area_corp')
+
+                #직무정보가 없다
+                if not job_area:
+                    #한 칸의 정보가 없을 때에는 '이번에만 넘어가자'
+                    continue
+                
+                #직무, 회사정보 get
+                job_title = job_area.select_one('.job_tit').get_text(strip = True)
+                condition_area = job_area.select_one('.job_condition')
+                spans = condition_area.select('span')
+                
+                location = spans[0].get_text(strip = True)
+                condition1 = spans[1].get_text(strip = True)
+
+                # condition2 = spans[-1].get_text(strip = True) : 
+                # 정규직 계약직 뽑아내는 코드 / -1은 마지막이란뜻
+                job_sector = item.select_one('div.job_sector')
+                condition2 = job_sector.get_text(strip = True)
+
+
+                #회사정보
+                cor_name = corp_area.select_one('strong').get_text(strip = True)
+
+                #링크
+                link = job_area.select_one('.job_tit').select_one('.data_layer[href]')
+                real_link = 'https://www.saramin.co.kr' + link.get('href')
+
+                rows.append({
+                    '이름' : job_title,
+                    '위치' : location,
+                    '조건1' : condition1,
+                    '조건2' : condition2,
+                    '회사이름' : cor_name,
+                    '링크' : real_link
+                })
+        except Exception as e:
+            print(f'에러 발생 {e}')
+            break
 
     df = pd.DataFrame(rows)
-    print(df)
-    return '사람인결과'
+    #print(df)
+    return df
 
 def crawling_work24(search_text : str,
                      except_text : str = '',
@@ -212,6 +232,10 @@ def crawling_work24(search_text : str,
         print(t)
         # link = 
 
-if __name__ == '__main__':
-    crawling_work24('AI')
-    # crawling_saramin('빅데이터')
+    df = pd.DataFrame(rows)
+    #print(df)
+    return df
+
+# if __name__ == '__main__':
+#     crawling_work24('AI')
+#     # crawling_saramin('빅데이터')
